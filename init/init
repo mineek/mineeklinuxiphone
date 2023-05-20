@@ -1,0 +1,160 @@
+#!/bin/sh
+IP=172.16.42.1
+TELNET_PORT=23
+setup_usb_network_android() {
+	# Only run, when we have the android usb driver
+	SYS=/sys/class/android_usb/android0
+	if ! [ -e "$SYS" ]; then
+		echo "  /sys/class/android_usb does not exist, skipping android_usb"
+		return
+	fi
+
+	echo "  Setting up an USB gadget through android_usb"
+
+	usb_idVendor="$(echo "${deviceinfo_usb_idVendor:-0x18D1}" | sed "s/0x//g")"	# default: Google Inc.
+	usb_idProduct="$(echo "${deviceinfo_usb_idProduct:-0xD001}" | sed "s/0x//g")"	# default: Nexus 4 (fastboot)
+
+	# Do the setup
+	echo "0" >"$SYS/enable"
+	echo "$usb_idVendor" >"$SYS/idVendor"
+	echo "$usb_idProduct" >"$SYS/idProduct"
+	echo "rndis" >"$SYS/functions"
+	echo "1" >"$SYS/enable"
+}
+
+setup_usb_network_configfs() {
+	# See: https://www.kernel.org/doc/Documentation/usb/gadget_configfs.txt
+	CONFIGFS=/config/usb_gadget
+
+	if ! [ -e "$CONFIGFS" ]; then
+		echo "  /config/usb_gadget does not exist, skipping configfs usb gadget"
+		return
+	fi
+
+	# Default values for USB-related deviceinfo variables
+	usb_idVendor="${deviceinfo_usb_idVendor:-0x18D1}"   # default: Google Inc.
+	usb_idProduct="${deviceinfo_usb_idProduct:-0xD001}" # default: Nexus 4 (fastboot)
+	usb_serialnumber="${deviceinfo_usb_serialnumber:-postmarketOS}"
+	usb_network_function="${deviceinfo_usb_network_function:-rndis.usb0}"
+
+	echo "  Setting up an USB gadget through configfs"
+	# Create an usb gadet configuration
+	mkdir $CONFIGFS/g1 || echo "  Couldn't create $CONFIGFS/g1"
+	echo "$usb_idVendor"  > "$CONFIGFS/g1/idVendor"
+	echo "$usb_idProduct" > "$CONFIGFS/g1/idProduct"
+
+	# Create english (0x409) strings
+	mkdir $CONFIGFS/g1/strings/0x409 || echo "  Couldn't create $CONFIGFS/g1/strings/0x409"
+
+	# shellcheck disable=SC2154
+	echo "$deviceinfo_manufacturer" > "$CONFIGFS/g1/strings/0x409/manufacturer"
+	echo "$usb_serialnumber"        > "$CONFIGFS/g1/strings/0x409/serialnumber"
+	# shellcheck disable=SC2154
+	echo "$deviceinfo_name"         > "$CONFIGFS/g1/strings/0x409/product"
+
+	# Create network function.
+	mkdir $CONFIGFS/g1/functions/"$usb_network_function" \
+		|| echo "  Couldn't create $CONFIGFS/g1/functions/$usb_network_function"
+
+	# Create configuration instance for the gadget
+	mkdir $CONFIGFS/g1/configs/c.1 \
+		|| echo "  Couldn't create $CONFIGFS/g1/configs/c.1"
+	mkdir $CONFIGFS/g1/configs/c.1/strings/0x409 \
+		|| echo "  Couldn't create $CONFIGFS/g1/configs/c.1/strings/0x409"
+	echo "USB network" > $CONFIGFS/g1/configs/c.1/strings/0x409/configuration \
+		|| echo "  Couldn't write configration name"
+
+	# Link the network instance to the configuration
+	ln -s $CONFIGFS/g1/functions/"$usb_network_function" $CONFIGFS/g1/configs/c.1 \
+		|| echo "  Couldn't symlink $usb_network_function"
+
+	# Check if there's an USB Device Controller
+	if [ -z "$(ls /sys/class/udc)" ]; then
+		echo "  No USB Device Controller available"
+		return
+	fi
+
+	# Link the gadget instance to an USB Device Controller. This activates the gadget.
+	# See also: https://github.com/postmarketOS/pmbootstrap/issues/338
+	# shellcheck disable=SC2005
+	echo "$(ls /sys/class/udc)" > $CONFIGFS/g1/UDC || echo "  Couldn't write UDC"
+}
+
+setup_usb_network() {
+	# Only run once
+	_marker="/tmp/_setup_usb_network"
+	[ -e "$_marker" ] && return
+	touch "$_marker"
+	echo "Setup usb network"
+	# Run all usb network setup functions (add more below!)
+	setup_usb_network_android
+	setup_usb_network_configfs
+}
+
+start_unudhcpd() {
+	# Only run once
+	[ "$(pidof unudhcpd)" ] && return
+
+	# Skip if disabled
+	# shellcheck disable=SC2154
+	if [ "$deviceinfo_disable_dhcpd" = "true" ]; then
+		echo "NOTE: start of dhcpd is disabled (deviceinfo_disable_dhcpd)"
+		return
+	fi
+
+	echo "Starting unudhcpd"
+	# Get usb interface
+	INTERFACE=""
+	ifconfig rndis0 "$IP" 2>/dev/null && INTERFACE=rndis0
+	if [ -z $INTERFACE ]; then
+		ifconfig usb0 "$IP" 2>/dev/null && INTERFACE=usb0
+	fi
+	if [ -z $INTERFACE ]; then
+		ifconfig eth0 "$IP" 2>/dev/null && INTERFACE=eth0
+	fi
+
+	if [ -z $INTERFACE ]; then
+		echo "  Could not find an interface to run a dhcp server on"
+		echo "  Interfaces:"
+		ip link
+		return
+	fi
+
+	echo "  Using interface $INTERFACE"
+	echo "  Starting the DHCP daemon"
+	(
+		unudhcpd -i "$INTERFACE" -s 172.16.42.1 -c 172.16.42.2
+	) &
+}
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /config
+mount -t configfs configfs /config
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+exec 0</dev/kmsg
+exec 1>/dev/kmsg
+exec 2>/dev/kmsg
+echo "MineekLinux: Early init started"
+echo "MineekLinux: Starting usb networking"
+setup_usb_network
+echo "MineekLinux: Starting unudhcpd"
+start_unudhcpd
+echo "MineekLinux: Preparing for telnet"
+echo "MineekLinux: Creating 'mineekos_shell' script"
+{
+	echo "#!/bin/sh"
+	echo "sh"
+} >/usr/bin/mineekos_shell
+echo "MineekLinux: Creating 'telnet_connect.sh' script"
+{
+	echo "#!/bin/sh"
+	echo "echo \"Welcome to MineekLinux!\""
+	echo "sh"
+} >/telnet_connect.sh
+chmod +x /telnet_connect.sh
+telnetd -b "${IP}:${TELNET_PORT}" -l /telnet_connect.sh
+echo "MineekLinux: Executing real init to set stuff up"
+exec /sbin/init

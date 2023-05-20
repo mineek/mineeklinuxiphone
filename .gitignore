@@ -1,0 +1,4 @@
+output/
+init/oldinit.sh
+bins
+copybins/hx-touchd
