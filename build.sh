@@ -88,6 +88,9 @@ ip route add default via 172.16.42.2 dev usb0
 echo nameserver 1.1.1.1 > /etc/resolv.conf
 !
 
+chmod +x rootfs/usr/bin/enable_usb_networking
+chmod +x rootfs/usr/bin/setup_xfce
+
 cp -v ../copybins/hx-touchd rootfs/usr/bin
 
 cd rootfs
