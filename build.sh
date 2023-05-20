@@ -66,7 +66,7 @@ cat << ! > rootfs/usr/bin/setup_xfce_data_touchscreen.conf
 Section "InputDevice"
     Driver       "evdev"
     Identifier   "touchscreen"
-    Option       "Device" "/dev/input/event1"
+    Option       "Device" "/dev/hx-touch"
 EndSection
 !
 
@@ -75,7 +75,7 @@ cat << ! > rootfs/usr/bin/setup_xfce
 echo "This will install xfce4 and configure it for the iPhone"
 echo "This will take a while, please be patient"
 apk update
-apk add xfce4 dbus xorg-server xf86-video-fbdev
+apk add xfce4 dbus xorg-server xf86-video-fbdev xf86-input-evdev
 rc-service dbus start
 cp /usr/bin/setup_xfce_data_screen.conf /usr/share/X11/xorg.conf.d/screen.conf
 cp /usr/bin/setup_xfce_data_touchscreen.conf /usr/share/X11/xorg.conf.d/touchscreen.conf
@@ -92,6 +92,7 @@ chmod +x rootfs/usr/bin/enable_usb_networking
 chmod +x rootfs/usr/bin/setup_xfce
 
 cp -v ../copybins/hx-touchd rootfs/usr/bin
+chmod +x rootfs/usr/bin/hx-touchd
 
 cd rootfs
 sh -c "find . | cpio  --quiet -o -H newc | gzip -9 > ../initramfs.cpio.gz"
