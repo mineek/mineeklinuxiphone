@@ -1,0 +1,6 @@
+mkdir -p /mnt/apfs
+mount -t apfs -o ro,relatime,vol=7 /dev/nvme0n1p1 /mnt/apfs
+hx-touchd C1F5D,2 /mnt/apfs/usr/share/firmware/multitouch/D10.mtprops /dev/nvme0n3
+
+sudo nbd-server -C /dev/null 172.16.42.2:9999 /home/mineek/Desktop/projects/iphone7new/mineeklinuxiphone/output/rootfs.img -d
+telnet 172.16.42.1 23
